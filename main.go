@@ -1,9 +1,10 @@
 package main
 
 import (
+	"bufio"
+	"container/list"
 	"flag"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -12,68 +13,60 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 )
 
 func main() {
 	// 参数
-	dir := flag.String("d", ".", "指定文件存放的目录，默认是程序运行的目录")
-
 	flag.Parse()
-
-	// 设置当前目录
-	os.Chdir(*dir)
 
 	// 基础URL地址
 	if flag.NArg() < 1 {
 		log.Fatal("请指定要抓取的基础URL地址")
 	}
-	var err error
-	BaseUrl, err = url.Parse(flag.Arg(0))
+	baseUrl, err := url.Parse(flag.Arg(0))
 	if err != nil {
 		log.Fatal(err)
 	}
-	if BaseUrl.Host == "" || BaseUrl.Scheme == "" {
+	if baseUrl.Host == "" || baseUrl.Scheme == "" {
 		log.Fatal("请指定正确的URL地址")
 	}
-
-	fetchAll(BaseUrl.String())
-
-	Waiter.Wait()
-}
-
-func fetchAll(urls ...string) {
-	if urls == nil {
-		return
+	if strings.HasPrefix(baseUrl.Path, "/") {
+		baseUrl.Path = baseUrl.Path[1:]
 	}
+	BaseHost = baseUrl.Host
 
-	for i := range urls {
-		Waiter.Add(1)
-		go func(s string) {
-			fetchAll(fetch(s)...)
-			Waiter.Done()
-		}(urls[i])
-	}
-
-}
-
-func fetch(urlStr string) (subUrls []string) {
-
-	// url处理
-	u, err := url.Parse(urlStr)
+	// 创建目录
+	err = os.Mkdir(BaseHost, 0777)
 	if err != nil {
-		log.Println(err)
-		return
-	}
-	switch {
-	case u.Host == "":
-		u.Host = BaseUrl.Host
-		u.Scheme = BaseUrl.Scheme
-
-	case u.Host != BaseUrl.Host:
-		return
+		log.Fatal(err)
 	}
 
+	// 设置当前目录
+	os.Chdir(BaseHost)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 执行抓取
+	ToVisit.PushBack(*baseUrl)
+	for {
+		elem := ToVisit.Front()
+		if elem == nil {
+			break
+		}
+		u := ToVisit.Remove(elem).(url.URL)
+		fetch(u)
+		Visted.PushBack(u)
+	}
+	log.Printf("共抓取 %d 次，其中静态页面 %d 次，其他资源 %d 次\n", TextCount+BlobCount, TextCount, BlobCount)
+
+}
+
+func fetch(u url.URL) {
+	// 判断是否已经访问过
+	if hasVisited(&u) {
+		return
+	}
 	// 网络链接
 	resp, err := http.Get(u.String())
 	if err != nil {
@@ -85,31 +78,27 @@ func fetch(urlStr string) (subUrls []string) {
 	cType := resp.Header.Get("Content-Type")
 	switch {
 	case strings.HasPrefix(cType, "text"):
-		subUrls = fetchText(resp.Body, u)
-		return
+		fetchText(resp.Body, &u)
 	default:
-		fetchBlob(resp.Body, u)
-		return
+		fetchBlob(resp.Body, &u)
 	}
+	log.Println(u.String())
 }
 
 func fetchBlob(reader io.Reader, u *url.URL) {
 	// 获取相对路径
-	filePath := u.Path
-	if strings.HasPrefix(filePath, "/") {
-		filePath = filePath[1:]
-	}
-	if filePath == "" {
-		log.Println("不是有效的二进制文件路径")
+	if u.Path == "" {
+		log.Println(u.Path, ": 不是有效的二进制文件路径")
 		return
 	}
 
 	// 新建文件
-	file, err := createFile(filePath)
+	file, err := createFile(u.Path)
 	if err != nil {
 		log.Println(err)
 		return
 	}
+	defer file.Close()
 
 	// 写入文件
 	_, err = io.Copy(file, reader)
@@ -118,120 +107,109 @@ func fetchBlob(reader io.Reader, u *url.URL) {
 		return
 	}
 
-	// 加入到已访问行列
-	addVisited(u)
+	BlobCount++
 }
 
-func fetchText(reader io.Reader, u *url.URL) (subUrls []string) {
-
-	// 读取
-	buf, err := ioutil.ReadAll(reader)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	// 网页所有内容
-	body := string(buf)
-
-	// 正则匹配超链接
-	regs := []*regexp.Regexp{
-		regexp.MustCompile(`[Hh][Rr][Ee][Ff]=["'](.*?)["']`),
-		regexp.MustCompile(`[Ss][Rr][Cc]=["'](.*?)["']`),
-		regexp.MustCompile(`[Uu][Rr][Ll]\(["']?(.*?)["']?\)`),
-	}
-
-	var matches [][]string
-	for i := range regs {
-		matches = append(matches, regs[i].FindAllStringSubmatch(body, -1)...)
-	}
-
-	// 获取相对路径
-	filePath := dealSuffix(u.Path)
-
+func fetchText(reader io.Reader, u *url.URL) {
 	// 换取本次URL的绝对文件路径
-	basePath, err := filepath.Abs(path.Dir(filePath))
+	basePath := dealSuffix(u.Path)
+	baseDir, err := filepath.Abs(path.Dir(basePath))
 	if err != nil {
 		log.Println(err)
 		return
-	}
-
-	// 替换BODY的绝对路径
-	subUrls = make([]string, 0, 64)
-	for i := range matches {
-		// 获取子URL
-		str := matches[i][1]
-		if !strings.HasPrefix(str, "http") && !strings.HasPrefix(str, "/") {
-			continue
-		}
-
-		subU, err := url.Parse(str)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-
-		if subU.Host != "" && subU.Host != BaseUrl.Host {
-			continue
-		}
-
-		// 检查是否已经获取了
-		if hasVisited(subU) {
-			continue
-		}
-
-		subUrls = append(subUrls, str)
-
-		replace := dealSuffix(subU.Path)
-
-		// 获取绝对路径
-		replace, err = filepath.Abs(replace)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-
-		// 获取相对本页面的相对路径
-		replace, err = filepath.Rel(basePath, replace)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-
-		body = strings.Replace(body, str, replace, -1)
 	}
 
 	// 新建文件
-	file, err := createFile(filePath)
+	file, err := createFile(basePath)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 	defer file.Close()
 
-	// 写入文件
-	bodyReader := strings.NewReader(body)
-	_, err = io.Copy(file, bodyReader)
-	if err != nil {
+	// ReadLine 读取BODY
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// 正则匹配超链接
+		var matches [][]int
+
+		for i := range Regs {
+			matches = append(matches, Regs[i].FindAllStringSubmatchIndex(line, -1)...)
+		}
+
+		newLine := line
+		for _, v := range matches {
+			// 获取子URL
+			link := line[v[2]:v[3]]
+			if !strings.HasPrefix(link, "http") && !strings.HasPrefix(link, "/") {
+				continue
+			}
+
+			subU, err := url.Parse(link)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+
+			if subU.Host == "" {
+				subU.Host = BaseHost
+				subU.Scheme = "http"
+			}
+
+			if subU.Scheme == "" {
+				subU.Scheme = "http"
+			}
+
+			if subU.Host != BaseHost {
+				continue
+			}
+
+			if strings.HasPrefix(subU.Path, "/") {
+				subU.Path = subU.Path[1:]
+			}
+
+			subU = cleanURL(subU)
+
+			if !hasVisited(subU) {
+				ToVisit.PushBack(*subU)
+			}
+
+			// 修改body中的路径
+			relP, err := filepath.Abs(dealSuffix(subU.Path))
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			relP, err = filepath.Rel(baseDir, relP)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+
+			newLine = line[:v[2]] + relP + line[v[3]:]
+		}
+
+		// 修改后并写入文件
+		_, err = file.WriteString(newLine + "\n")
+		if err != nil {
+			log.Println(err)
+		}
+	}
+
+	if err = scanner.Err(); err != nil {
 		log.Println(err)
 		return
 	}
 
-	// 加入到已访问行列
-	addVisited(u)
-
-	return
+	TextCount++
 }
 
 func dealSuffix(filePath string) string {
 	if strings.HasPrefix(filePath, "/") {
 		filePath = filePath[1:]
 	}
-
-	if filePath == "" {
-		filePath = "index.html"
-	}
-
 	switch path.Ext(filePath) {
 	case ".html", ".xhtml", ".shtml", ".css", ".js":
 	case ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".ico":
@@ -239,7 +217,6 @@ func dealSuffix(filePath string) string {
 	default:
 		filePath = filePath + ".html"
 	}
-
 	return filePath
 }
 
@@ -258,42 +235,37 @@ func createFile(filePath string) (*os.File, error) {
 	return file, nil
 }
 
-func addVisited(u *url.URL) {
-	VisitLock.Lock()
-	Visted = append(Visted, *u)
-	VisitLock.Unlock()
-}
-
 func hasVisited(u *url.URL) bool {
-	for _, v := range Visted {
-		if u.Host != v.Host {
-			continue
+	for e := Visted.Front(); e != nil; e = e.Next() {
+		if *u == e.Value {
+			return true
 		}
-
-		if u.Scheme != v.Scheme {
-			continue
-		}
-
-		p1 := u.Path
-		p2 := v.Path
-		if strings.HasPrefix(p1, "/") {
-			p1 = p1[1:]
-		}
-		if strings.HasPrefix(p2, "/") {
-			p2 = p2[1:]
-		}
-		if p1 != p2 {
-			continue
-		}
-
-		return true
 	}
 	return false
 }
 
+func cleanURL(u *url.URL) *url.URL {
+	return &url.URL{
+		Host:   u.Host,
+		Path:   u.Path,
+		Scheme: u.Scheme,
+	}
+}
+
 var (
-	BaseUrl   *url.URL
-	VisitLock sync.Mutex
-	Visted    []url.URL
-	Waiter    sync.WaitGroup
+	TextCount int
+	BlobCount int
 )
+
+var BaseHost string
+
+var (
+	ToVisit = list.New()
+	Visted  = list.New()
+)
+
+var Regs = []*regexp.Regexp{
+	regexp.MustCompile(`[Hh][Rr][Ee][Ff]=["'](.*?)["']`),
+	regexp.MustCompile(`[Ss][Rr][Cc]=["'](.*?)["']`),
+	regexp.MustCompile(`[Uu][Rr][Ll]\(["']?(.*?)["']?\)`),
+}
