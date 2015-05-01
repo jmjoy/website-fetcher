@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"container/list"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -15,34 +16,45 @@ import (
 	"strings"
 )
 
-func main() {
-	// 参数
+func init() {
+	// 输入参数
+	flag.StringVar(&BaseDir, "dir", "", "存放网页文件的基本目录，默认为网站域名")
+	flag.IntVar(&DirLimit, "count", 255, "限制每个文件夹的文件数，默认255个")
+	flag.IntVar(&Deepth, "deepth", 16, "限制文件的深度，默认16层")
+	flag.BoolVar(&IsAll, "all", false, "是否要抓取整个网站，默认只抓取指定URL以下的网页")
+	flag.BoolVar(&IsHelp, "help", false, "获取帮助")
+
 	flag.Parse()
+}
+
+func main() {
+	// 判断是不是要获取帮助信息
+	if IsHelp || flag.NArg() < 1 {
+		printHelp()
+		return
+	}
 
 	// 基础URL地址
-	if flag.NArg() < 1 {
-		log.Fatal("请指定要抓取的基础URL地址")
-	}
-	baseUrl, err := url.Parse(flag.Arg(0))
-	if err != nil {
-		log.Fatal(err)
-	}
-	if baseUrl.Host == "" || baseUrl.Scheme == "" {
+	baseUrl, err := ParseDetailURL(flag.Arg(0))
+
+	if err != nil || baseUrl.Host == "" || baseUrl.Scheme == "" {
 		log.Fatal("请指定正确的URL地址")
 	}
-	if strings.HasPrefix(baseUrl.Path, "/") {
-		baseUrl.Path = baseUrl.Path[1:]
-	}
+
 	BaseHost = baseUrl.Host
 
+	if BaseDir == "" {
+		BaseDir = BaseHost
+	}
+
 	// 创建目录
-	err = os.Mkdir(BaseHost, 0777)
+	err = os.Mkdir(BaseDir, 0777)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// 设置当前目录
-	os.Chdir(BaseHost)
+	os.Chdir(BaseDir)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -54,15 +66,15 @@ func main() {
 		if elem == nil {
 			break
 		}
-		u := ToVisit.Remove(elem).(url.URL)
+		u := ToVisit.Remove(elem).(DetailURL)
 		fetch(u)
 		Visted.PushBack(u)
 	}
-	log.Printf("共抓取 %d 次，其中静态页面 %d 次，其他资源 %d 次\n", TextCount+BlobCount, TextCount, BlobCount)
 
+	log.Printf("共抓取 %d 次，其中静态页面 %d 次，其他资源 %d 次\n", TextCount+BlobCount, TextCount, BlobCount)
 }
 
-func fetch(u url.URL) {
+func fetch(u DetailURL) {
 	// 判断是否已经访问过
 	if hasVisited(&u) {
 		return
@@ -252,6 +264,13 @@ func cleanURL(u *url.URL) *url.URL {
 	}
 }
 
+func printHelp() {
+	fmt.Println(`website-fetcher 适用于抓取文档类型网站的小工具`)
+	fmt.Println(`用法: website-fetcher [-dir|-count|-deepth|-all|-help] URL`)
+	fmt.Println()
+	flag.PrintDefaults()
+}
+
 var (
 	TextCount int
 	BlobCount int
@@ -261,7 +280,7 @@ var BaseHost string
 
 var (
 	ToVisit = list.New()
-	Visted  = list.New()
+	Visted  Dir
 )
 
 var Regs = []*regexp.Regexp{
@@ -269,3 +288,11 @@ var Regs = []*regexp.Regexp{
 	regexp.MustCompile(`[Ss][Rr][Cc]=["'](.*?)["']`),
 	regexp.MustCompile(`[Uu][Rr][Ll]\(["']?(.*?)["']?\)`),
 }
+
+var (
+	BaseDir  string
+	DirLimit int
+	Deepth   int
+	IsAll    bool
+	IsHelp   bool
+)
