@@ -11,9 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"path/filepath"
 	"regexp"
-	"strings"
 )
 
 func init() {
@@ -35,71 +33,48 @@ func main() {
 	}
 
 	// 基础URL地址
-	baseUrl, err := ParseDetailURL(flag.Arg(0))
+	handleBaseURL(flag.Arg(0))
 
-	if err != nil || baseUrl.Host == "" || baseUrl.Scheme == "" {
-		log.Fatal("请指定正确的URL地址")
-	}
-
-	BaseHost = baseUrl.Host
-
-	if BaseDir == "" {
-		BaseDir = BaseHost
-	}
-
-	// 创建目录
-	err = os.Mkdir(BaseDir, 0777)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// 设置当前目录
-	os.Chdir(BaseDir)
-	if err != nil {
-		log.Fatal(err)
-	}
+	// 新建文件夹
+	handleDir()
 
 	// 执行抓取
-	ToVisit.PushBack(*baseUrl)
+	ToVisit.PushBack(*BaseURL)
 	for {
 		elem := ToVisit.Front()
 		if elem == nil {
 			break
 		}
-		u := ToVisit.Remove(elem).(DetailURL)
-		fetch(u)
-		Visted.PushBack(u)
+		u := ToVisit.Remove(elem).(URL)
+		fetch(&u)
+		Visited.PushBack(u)
 	}
 
 	log.Printf("共抓取 %d 次，其中静态页面 %d 次，其他资源 %d 次\n", TextCount+BlobCount, TextCount, BlobCount)
 }
 
-func fetch(u DetailURL) {
-	// 判断是否已经访问过
-	if hasVisited(&u) {
-		return
-	}
+func fetch(u *URL) {
 	// 网络链接
 	resp, err := http.Get(u.String())
 	if err != nil {
+		log.Println(err)
 		return
 	}
 	defer resp.Body.Close()
 
 	// 判断是不是静态html文件
-	cType := resp.Header.Get("Content-Type")
-	switch {
-	case strings.HasPrefix(cType, "text"):
-		fetchText(resp.Body, &u)
-	default:
-		fetchBlob(resp.Body, &u)
+	if u.IsBlob {
+		fetchBlob(resp.Body, u)
+	} else {
+		fetchText(resp.Body, u)
 	}
+
 	log.Println(u.String())
 }
 
-func fetchBlob(reader io.Reader, u *url.URL) {
+func fetchBlob(reader io.Reader, u *URL) {
 	// 获取相对路径
-	if u.Path == "" {
+	if u.Filepath == "" {
 		log.Println(u.Path, ": 不是有效的二进制文件路径")
 		return
 	}
@@ -122,17 +97,9 @@ func fetchBlob(reader io.Reader, u *url.URL) {
 	BlobCount++
 }
 
-func fetchText(reader io.Reader, u *url.URL) {
-	// 换取本次URL的绝对文件路径
-	basePath := dealSuffix(u.Path)
-	baseDir, err := filepath.Abs(path.Dir(basePath))
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
+func fetchText(reader io.Reader, u *URL) {
 	// 新建文件
-	file, err := createFile(basePath)
+	file, err := createFile(u.Filepath)
 	if err != nil {
 		log.Println(err)
 		return
@@ -155,46 +122,17 @@ func fetchText(reader io.Reader, u *url.URL) {
 		for _, v := range matches {
 			// 获取子URL
 			link := line[v[2]:v[3]]
-			if !strings.HasPrefix(link, "http") && !strings.HasPrefix(link, "/") {
-				continue
-			}
 
-			subU, err := url.Parse(link)
+			subU, err := ParseURL(link, BaseURL.Host)
 			if err != nil {
 				log.Println(err)
 				continue
 			}
 
-			if subU.Host == "" {
-				subU.Host = BaseHost
-				subU.Scheme = "http"
-			}
-
-			if subU.Scheme == "" {
-				subU.Scheme = "http"
-			}
-
-			if subU.Host != BaseHost {
-				continue
-			}
-
-			if strings.HasPrefix(subU.Path, "/") {
-				subU.Path = subU.Path[1:]
-			}
-
-			subU = cleanURL(subU)
-
-			if !hasVisited(subU) {
-				ToVisit.PushBack(*subU)
-			}
+			handlePush(subU)
 
 			// 修改body中的路径
-			relP, err := filepath.Abs(dealSuffix(subU.Path))
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-			relP, err = filepath.Rel(baseDir, relP)
+			relP, err := subU.Relpath(path.Dir(u.Filepath))
 			if err != nil {
 				log.Println(err)
 				continue
@@ -218,18 +156,22 @@ func fetchText(reader io.Reader, u *url.URL) {
 	TextCount++
 }
 
-func dealSuffix(filePath string) string {
-	if strings.HasPrefix(filePath, "/") {
-		filePath = filePath[1:]
+func handlePush(u *URL) {
+	for e := Visited.Front(); e != nil; e = e.Next() {
+		nu := e.Value.(URL)
+		if u.IsEqual(&nu) {
+			return
+		}
 	}
-	switch path.Ext(filePath) {
-	case ".html", ".xhtml", ".shtml", ".css", ".js":
-	case ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".ico":
-	case ".mp3", ".mp4", ".swf":
-	default:
-		filePath = filePath + ".html"
+
+	for e := ToVisit.Front(); e != nil; e = e.Next() {
+		nu := e.Value.(URL)
+		if u.IsEqual(&nu) {
+			return
+		}
 	}
-	return filePath
+
+	ToVisit.PushBack(*u)
 }
 
 func createFile(filePath string) (*os.File, error) {
@@ -247,20 +189,48 @@ func createFile(filePath string) (*os.File, error) {
 	return file, nil
 }
 
-func hasVisited(u *url.URL) bool {
-	for e := Visted.Front(); e != nil; e = e.Next() {
-		if *u == e.Value {
-			return true
-		}
+func handleBaseURL(s string) {
+	// 基础URL地址
+	u, err := url.Parse(s)
+
+	if err != nil || u.Host == "" || u.Scheme == "" {
+		log.Fatal("请指定指定完整正确的URL地址")
 	}
-	return false
+
+	BaseURL, err = ParseURL(s, u.Host)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if BaseURL.IsBlob {
+		log.Fatal("URL地址获取的内容不是文本类型")
+	}
+
+	if IsAll {
+		newURL := new(URL)
+		newURL.Scheme = BaseURL.Scheme
+		newURL.Host = BaseURL.Host
+		newURL.IsBlob = false
+		newURL.Filepath = "__index__.html"
+		BaseURL = newURL
+	}
 }
 
-func cleanURL(u *url.URL) *url.URL {
-	return &url.URL{
-		Host:   u.Host,
-		Path:   u.Path,
-		Scheme: u.Scheme,
+func handleDir() {
+	if BaseDir == "" {
+		BaseDir = BaseURL.Host
+	}
+
+	// 创建目录
+	err := os.Mkdir(BaseDir, 0777)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 设置当前目录
+	os.Chdir(BaseDir)
+	if err != nil {
+		log.Fatal(err)
 	}
 }
 
@@ -272,27 +242,23 @@ func printHelp() {
 }
 
 var (
-	TextCount int
-	BlobCount int
-)
-
-var BaseHost string
-
-var (
-	ToVisit = list.New()
-	Visted  Dir
-)
-
-var Regs = []*regexp.Regexp{
-	regexp.MustCompile(`[Hh][Rr][Ee][Ff]=["'](.*?)["']`),
-	regexp.MustCompile(`[Ss][Rr][Cc]=["'](.*?)["']`),
-	regexp.MustCompile(`[Uu][Rr][Ll]\(["']?(.*?)["']?\)`),
-}
-
-var (
 	BaseDir  string
 	DirLimit int
 	Deepth   int
 	IsAll    bool
 	IsHelp   bool
+
+	BaseURL *URL
+
+	TextCount int
+	BlobCount int
+
+	ToVisit = list.New()
+	Visited = list.New()
 )
+
+var Regs = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)href=["'](.*?)["']`),
+	regexp.MustCompile(`(?i)src=["'](.*?)["']`),
+	regexp.MustCompile(`(?i)url\(["']?(.*?)["']?\)`),
+}
