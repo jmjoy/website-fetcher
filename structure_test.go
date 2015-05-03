@@ -1,13 +1,29 @@
 package main
 
 import (
+	"fmt"
 	"net/url"
+	"path"
+	"strings"
 	"testing"
 )
 
+func TestPath(t *testing.T) {
+	for i, v := range urlList {
+		u, _ := url.Parse(v)
+		text := fmt.Sprintf("%d %v %s \n", i, v, u.Path)
+		pathList := strings.Split(u.Path, "/")
+		for _, s := range pathList {
+			text = text + "--" + s + "-- "
+		}
+		text = text + "\n" + path.Join(pathList...)
+		t.Log(text)
+	}
+}
+
 func TestIsEqual(t *testing.T) {
 	for _, v := range urlList {
-		u, err := ParseURL(v, "www.baidu.com", false)
+		u, err := ParseURL(v, "www.baidu.com")
 		if err != nil {
 			t.Log(err)
 		} else {
@@ -34,7 +50,7 @@ func TestParseURL(t *testing.T) {
 	}
 
 	for i := 0; i < len(ulist); i++ {
-		u, _ := ParseURL(slist[i], "www.baidu.com", false)
+		u, _ := ParseURL(slist[i], "www.baidu.com")
 		if u != ulist[i] {
 			//t.Fatal("Error:", u, *ulist[i])
 		}
@@ -44,6 +60,7 @@ func TestParseURL(t *testing.T) {
 
 var urlList = []string{
 	"http://www.baidu.com",
+	"http://www.baidu.com/",
 	"http://www.baidu.com/index.html",
 	"/index.html",
 	"http://www.baidu.com/index.css",

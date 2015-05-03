@@ -258,7 +258,11 @@ var (
 )
 
 var Regs = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)href=["'](.*?)["']`),
-	regexp.MustCompile(`(?i)src=["'](.*?)["']`),
-	regexp.MustCompile(`(?i)url\(["']?(.*?)["']?\)`),
+	regexp.MustCompile(`(?i)href="(.*?)"`),
+	regexp.MustCompile(`(?i)href='(.*?)'`),
+	regexp.MustCompile(`(?i)src="(.*?)"`),
+	regexp.MustCompile(`(?i)src='(.*?)'`),
+	regexp.MustCompile(`(?i)url\((.*?)\)`),
+	regexp.MustCompile(`(?i)url\("?(.*?)"?\)`),
+	regexp.MustCompile(`(?i)url\('?(.*?)'?\)`),
 }
