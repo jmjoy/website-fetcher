@@ -1,5 +1,6 @@
 package main
 
+/*
 import (
 	"errors"
 	"fmt"
@@ -202,3 +203,4 @@ func strInSlice(s string, slice []string) bool {
 var (
 	errNeedGet = errors.New("请先调用Get")
 )
+*/

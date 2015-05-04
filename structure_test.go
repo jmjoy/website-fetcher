@@ -1,5 +1,6 @@
 package main
 
+/*
 import (
 	"fmt"
 	"net/url"
@@ -71,3 +72,4 @@ var urlList = []string{
 	"/a/b/../c/index.do",
 	"http://www.google.com/a/b/c/index.html",
 }
+*/
