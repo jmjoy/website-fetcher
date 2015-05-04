@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -55,40 +54,46 @@ func main() {
 
 func fetch(u *URL) {
 	// 网络链接
-	resp, err := http.Get(u.String())
+	resp, err := u.Get()
 	if err != nil {
 		log.Println(err)
 		return
 	}
 	defer resp.Body.Close()
 
-	// 判断是不是静态html文件
-	if u.IsBlob {
-		fetchBlob(resp.Body, u)
-	} else {
-		fetchText(resp.Body, u)
-	}
-
-	log.Println(u.String())
-}
-
-func fetchBlob(reader io.Reader, u *URL) {
 	// 获取相对路径
-	if u.Filepath == "" {
-		log.Println(u.Path, ": 不是有效的二进制文件路径")
+	relaPath, err := u.Filepath(BaseURL.Host)
+	if err != nil {
+		log.Println(err)
 		return
 	}
 
 	// 新建文件
-	file, err := createFile(u.Path)
+	file, err := createFile(relaPath)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 	defer file.Close()
 
+	// 判断是不是静态html文件
+	isText, err := u.IsTExt()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	if isText {
+		fetchBlob(file, resp.Body, u)
+	} else {
+		fetchText(file, resp.Body, u)
+	}
+
+	log.Println(u.String())
+}
+
+func fetchBlob(file io.Writer, reader io.Reader, u *URL) {
 	// 写入文件
-	_, err = io.Copy(file, reader)
+	_, err := io.Copy(file, reader)
 	if err != nil {
 		log.Println(err)
 		return
@@ -97,15 +102,7 @@ func fetchBlob(reader io.Reader, u *URL) {
 	BlobCount++
 }
 
-func fetchText(reader io.Reader, u *URL) {
-	// 新建文件
-	file, err := createFile(u.Filepath)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	defer file.Close()
-
+func fetchText(file io.Writer, reader io.Reader, u *URL) {
 	// ReadLine 读取BODY
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
@@ -118,7 +115,7 @@ func fetchText(reader io.Reader, u *URL) {
 			matches = append(matches, Regs[i].FindAllStringSubmatchIndex(line, -1)...)
 		}
 
-		newLine := line
+		//newLine := line
 		for _, v := range matches {
 			// 获取子URL
 			link := line[v[2]:v[3]]
@@ -132,23 +129,23 @@ func fetchText(reader io.Reader, u *URL) {
 			handlePush(subU)
 
 			// 修改body中的路径
-			relP, err := subU.Relpath(path.Dir(u.Filepath))
-			if err != nil {
-				log.Println(err)
-				continue
-			}
+			//relP, err := subU.Relpath(path.Dir(u.Filepath))
+			//if err != nil {
+			//    log.Println(err)
+			//    continue
+			//}
 
-			newLine = line[:v[2]] + relP + line[v[3]:]
+			//newLine = line[:v[2]] + relP + line[v[3]:]
 		}
 
 		// 修改后并写入文件
-		_, err = file.WriteString(newLine + "\n")
+		_, err := io.WriteString(file, line+"\n")
 		if err != nil {
 			log.Println(err)
 		}
 	}
 
-	if err = scanner.Err(); err != nil {
+	if err := scanner.Err(); err != nil {
 		log.Println(err)
 		return
 	}
@@ -202,18 +199,18 @@ func handleBaseURL(s string) {
 		log.Fatal(err)
 	}
 
-	if BaseURL.IsBlob {
-		log.Fatal("URL地址获取的内容不是文本类型")
-	}
+	//if BaseURL.IsBlob {
+	//    log.Fatal("URL地址获取的内容不是文本类型")
+	//}
 
-	if IsAll {
-		newURL := new(URL)
-		newURL.Scheme = BaseURL.Scheme
-		newURL.Host = BaseURL.Host
-		newURL.IsBlob = false
-		newURL.Filepath = "__index__.html"
-		BaseURL = newURL
-	}
+	//if IsAll {
+	//    newURL := new(URL)
+	//    newURL.Scheme = BaseURL.Scheme
+	//    newURL.Host = BaseURL.Host
+	//    newURL.IsBlob = false
+	//    newURL.Filepath = "__index__.html"
+	//    BaseURL = newURL
+	//}
 }
 
 func handleDir() {

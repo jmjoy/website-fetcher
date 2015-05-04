@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"path"
@@ -52,6 +53,9 @@ func ParseURL(rawurl, host string) (*URL, error) {
 }
 
 func (this *URL) IsEqual(other *URL) bool {
+	fmt.Println(*this)
+	fmt.Println(*other)
+
 	if this.Host != other.Host {
 		return false
 	}
@@ -118,7 +122,7 @@ func (this *URL) Relpath(basepath string) (string, error) {
 		return "", err
 	}
 
-	absFilepath, err := filepath.Abs(this.Filepath)
+	absFilepath, err := filepath.Abs(this.filePath)
 	if err != nil {
 		return "", err
 	}
@@ -132,61 +136,58 @@ func (this *URL) Filepath(host string) (string, error) {
 	}
 
 	lastPathIndex := len(this.PathList) - 1
-	copy()
+	pathList := make([]string, len(this.PathList))
+	copy(pathList, this.PathList)
 
 	switch this.contentType {
 	case UNKNOW:
 		return "", errNeedGet
 
 	case IS_TEXT:
-		if this.PathList[lastPathIndex] == "" {
-			this.PathList[lastPathIndex] = "__index__.html"
+		if pathList[lastPathIndex] == "" {
+			pathList[lastPathIndex] = "__index__.html"
 		} else {
-			switch path.Ext(this.PathList[len(this.PathList)-1]) {
+			switch path.Ext(pathList[len(pathList)-1]) {
 			case "html", "shtml", "xhtml", "css", "js":
 			default:
-				this.PathList[lastPathIndex] += ".html"
+				pathList[lastPathIndex] += ".html"
 			}
 		}
 
 	case IS_BLOB:
-		if this.PathList[lastPathIndex] == "" {
-			this.PathList[lastPathIndex] = "__index__"
+		if pathList[lastPathIndex] == "" {
+			pathList[lastPathIndex] = "__index__"
 		}
 	}
 
 	if len(this.Values) != 0 {
-		index := strings.LastIndex(this.PathList[lastPathIndex], ".")
+		index := strings.LastIndex(pathList[lastPathIndex], ".")
 
 		if index == -1 {
-			this.PathList[lastPathIndex] = this.PathList[lastPathIndex] +
+			pathList[lastPathIndex] = pathList[lastPathIndex] +
 				"__" + this.Values.Encode() + "__"
 
 		} else {
-			this.PathList[lastPathIndex] = this.PathList[lastPathIndex][:index] +
+			pathList[lastPathIndex] = pathList[lastPathIndex][:index] +
 				"__" + this.Values.Encode() + "__" +
-				this.PathList[lastPathIndex][index:]
+				pathList[lastPathIndex][index:]
 		}
 	}
 
-	if this.Host != host {
-		this.Filepath = "__other__/" + this.Host + "/" + this.Filepath
+	var filePath string
+
+	if this.Host == host {
+		filePath = path.Join(pathList...)
+	} else {
+		newPathList := make([]string, len(pathList)+2)
+		newPathList = append(newPathList, "__other__", host)
+		newPathList = append(newPathList, pathList...)
+		filePath = path.Join(newPathList...)
 	}
 
-	if this.Filepath == "" || strings.HasSuffix(this.Filepath, "/") {
-		this.Filepath += "__index__.html"
-	}
+	this.filePath = filePath
 
-	switch path.Ext(this.Filepath) {
-	case ".html", ".xhtml", ".shtml", ".css", ".js":
-	default:
-		this.Filepath += ".html"
-	}
-
-	if this.RawQuery != "" {
-		lastIndex := strings.LastIndex(this.Filepath, ".")
-		this.Filepath = this.Filepath[:lastIndex] + "__" + this.RawQuery + "__" + this.Filepath[lastIndex:]
-	}
+	return filePath, nil
 }
 
 func strInSlice(s string, slice []string) bool {
