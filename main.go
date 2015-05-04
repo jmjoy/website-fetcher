@@ -21,6 +21,7 @@ func init() {
 	flag.IntVar(&Deepth, "deepth", 16, "限制文件的深度，默认16层")
 	flag.BoolVar(&IsAll, "all", false, "是否要抓取整个网站，默认只抓取指定URL以下的网页")
 	flag.BoolVar(&IsHelp, "help", false, "获取帮助")
+	flag.BoolVar(&IsRaw, "raw", false, "是否原样抓取网页内容，不进行URL矫正")
 
 	flag.Parse()
 }
@@ -247,6 +248,7 @@ var (
 	Deepth   int
 	IsAll    bool
 	IsHelp   bool
+	IsRaw    bool
 
 	BaseURL *URL
 
