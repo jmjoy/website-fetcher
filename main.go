@@ -11,11 +11,12 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strings"
 )
 
 func init() {
 	// 输入参数
-	flag.StringVar(&BaseDir, "dir", "", "存放网页文件的基本目录，默认为网站域名")
+	flag.StringVar(&BaseDir, "dir", "web", "存放网页文件的基本目录，默认为web")
 	flag.IntVar(&DirLimit, "count", 255, "限制每个文件夹的文件数，默认255个")
 	flag.IntVar(&Deepth, "deepth", 16, "限制文件的深度，默认16层")
 	flag.BoolVar(&IsAll, "all", false, "是否要抓取整个网站，默认只抓取指定URL以下的网页")
@@ -55,38 +56,26 @@ func main() {
 
 func fetch(u *URL) {
 	// 网络链接
-	resp, err := u.Get()
+	resp, isText, err := u.Get()
 	if err != nil {
 		log.Println(err)
 		return
 	}
 	defer resp.Body.Close()
 
-	// 获取相对路径
-	relaPath, err := u.Filepath(BaseURL.Host)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
 	// 新建文件
-	file, err := createFile(relaPath)
+	file, err := createFile(u.FilePath)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 	defer file.Close()
 
-	// 判断是不是静态html文件
-	isText, err := u.IsTExt()
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	if isText {
-		fetchBlob(file, resp.Body, u)
-	} else {
+	// 不同类型文件不同处理方式
+	if isText && u.Host == BaseURL.Host {
 		fetchText(file, resp.Body, u)
+	} else {
+		fetchBlob(file, resp.Body, u)
 	}
 
 	log.Println(u.String())
@@ -118,8 +107,13 @@ func fetchText(file io.Writer, reader io.Reader, u *URL) {
 
 		//newLine := line
 		for _, v := range matches {
+			// 左右引号不对称的情况，因为go的正则不支持向后引用，所以这样写
+			if line[v[2]:v[3]] != line[v[6]:v[7]] {
+				continue
+			}
+
 			// 获取子URL
-			link := line[v[2]:v[3]]
+			link := line[v[4]:v[5]]
 
 			subU, err := ParseURL(link, BaseURL.Host)
 			if err != nil {
@@ -155,16 +149,22 @@ func fetchText(file io.Writer, reader io.Reader, u *URL) {
 }
 
 func handlePush(u *URL) {
+	if BasePath != "" {
+		if u.Host == BaseURL.Host && !strings.HasPrefix(u.FilePath, BasePath) {
+			return
+		}
+	}
+
 	for e := Visited.Front(); e != nil; e = e.Next() {
 		nu := e.Value.(URL)
-		if u.IsEqual(&nu) {
+		if u.Equal(&nu) {
 			return
 		}
 	}
 
 	for e := ToVisit.Front(); e != nil; e = e.Next() {
 		nu := e.Value.(URL)
-		if u.IsEqual(&nu) {
+		if u.Equal(&nu) {
 			return
 		}
 	}
@@ -200,6 +200,10 @@ func handleBaseURL(s string) {
 		log.Fatal(err)
 	}
 
+	if !IsAll {
+		BasePath = path.Dir(BaseURL.FilePath)
+	}
+
 	//if BaseURL.IsBlob {
 	//    log.Fatal("URL地址获取的内容不是文本类型")
 	//}
@@ -215,10 +219,6 @@ func handleBaseURL(s string) {
 }
 
 func handleDir() {
-	if BaseDir == "" {
-		BaseDir = BaseURL.Host
-	}
-
 	// 创建目录
 	err := os.Mkdir(BaseDir, 0777)
 	if err != nil {
@@ -247,7 +247,8 @@ var (
 	IsHelp   bool
 	IsRaw    bool
 
-	BaseURL *URL
+	BaseURL  *URL
+	BasePath string
 
 	TextCount int
 	BlobCount int
@@ -257,11 +258,7 @@ var (
 )
 
 var Regs = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)href="(.*?)"`),
-	regexp.MustCompile(`(?i)href='(.*?)'`),
-	regexp.MustCompile(`(?i)src="(.*?)"`),
-	regexp.MustCompile(`(?i)src='(.*?)'`),
-	regexp.MustCompile(`(?i)url\((.*?)\)`),
-	regexp.MustCompile(`(?i)url\("?(.*?)"?\)`),
-	regexp.MustCompile(`(?i)url\('?(.*?)'?\)`),
+	regexp.MustCompile(`(?i)href=(["'])(.*?)(["'])`),
+	regexp.MustCompile(`(?i)src=(["'])(.*?)(["'])`),
+	regexp.MustCompile(`(?i)url\((["']?)'(.*?)(["']?)\)`),
 }

@@ -5,13 +5,13 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
 )
 
 type URL struct {
 	*url.URL
-	url.Values
-	PathList []string
+	FilePath string
 }
 
 func ParseURL(s, host string) (*URL, error) {
@@ -33,29 +33,67 @@ func ParseURL(s, host string) (*URL, error) {
 	}
 
 	mu := new(URL)
+
 	mu.URL = u
-	mu.Values = u.Query()
-	mu.PathList = strings.Split(u.Path, "/")
+
+	pathList := strings.Split(mu.Path, "/")
+
+	if lastIndex := len(pathList) - 1; lastIndex > 0 {
+		if pathList[lastIndex] == "" {
+			pathList[lastIndex] = "__index__"
+		}
+	} else {
+		pathList = append(pathList, "__index__")
+	}
+
+	values := u.Query()
+	if values != nil && len(values) > 0 {
+		for k := range values {
+			sort.Strings(values[k])
+		}
+		lastIndex := len(pathList) - 1
+
+		if lastPos := strings.LastIndex(pathList[lastIndex], "."); lastPos != -1 {
+			pathList[lastIndex] = pathList[lastIndex][:lastPos] +
+				"__" + values.Encode() + "__" +
+				pathList[lastIndex][lastPos:]
+		} else {
+			pathList[lastIndex] = "__" + values.Encode() + "__"
+		}
+	}
+
+	newPathList := make([]string, 0, len(pathList)+2)
+	newPathList = append(newPathList, u.Host)
+	newPathList = append(newPathList, pathList...)
+
+	mu.FilePath = path.Join(newPathList...)
 
 	return mu, nil
 }
 
-func (this *URL) Get() (*http.Response, error) {
-	return http.Get(this.String())
-}
-
-func (this *URL) FilePath() string {
-
-	pathList := make([]string, 0, len(this.PathList)+1)
-	pathList = append(pathList, this.Host)
-	pathList = append(pathList, this.PathList...)
-
-	lastIndex := len(pathList) - 1
-	if pathList[lastIndex] == "" {
-		pathList[lastIndex] = "__index__.html"
+func (this *URL) Get() (resp *http.Response, isText bool, err error) {
+	resp, err = http.Get(this.String())
+	if err != nil {
+		return
 	}
 
-	return path.Join(pathList...)
+	cType := resp.Header.Get("Content-Type")
+	isText = strings.HasPrefix(cType, "text")
+
+	return
+}
+
+func (this *URL) Equal(other *URL) bool {
+
+	if this.Host != other.Host {
+		return false
+	}
+
+	if this.FilePath != other.FilePath {
+		return false
+	}
+
+	return true
 }
 
 var (
