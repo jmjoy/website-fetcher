@@ -9,17 +9,20 @@ import (
 	"strings"
 )
 
+// 增强URL
 type URL struct {
 	*url.URL
-	FilePath string
+	FilePath string // 生成的静态文件相对于工作目录的路径
 }
 
+// ParseURL 将s转化为增强URL，host为默认的域名（如果s没有指定域名）
 func ParseURL(s, host string) (*URL, error) {
 	u, err := url.Parse(s)
 	if err != nil {
 		return nil, err
 	}
 
+	// 默认协议头为http，如果不是http(s)则返回错误
 	switch {
 	case u.Scheme == "":
 		u.Scheme = "http"
@@ -28,6 +31,7 @@ func ParseURL(s, host string) (*URL, error) {
 		return nil, ErrNotHttp
 	}
 
+	// 默认域名
 	if u.Host == "" {
 		u.Host = host
 	}
@@ -38,6 +42,7 @@ func ParseURL(s, host string) (*URL, error) {
 
 	pathList := strings.Split(mu.Path, "/")
 
+	// 如果url路径没有后缀或为空，Filepath有一个默认的文件名
 	if lastIndex := len(pathList) - 1; lastIndex > 0 {
 		if pathList[lastIndex] == "" {
 			pathList[lastIndex] = "__index__"
@@ -46,6 +51,7 @@ func ParseURL(s, host string) (*URL, error) {
 		pathList = append(pathList, "__index__")
 	}
 
+	// 在Filepath的文件名里加上Query参数
 	values := u.Query()
 	if values != nil && len(values) > 0 {
 		for k := range values {
@@ -62,6 +68,7 @@ func ParseURL(s, host string) (*URL, error) {
 		}
 	}
 
+	// 组合Filepath，格式类似于 域名/xxx/.../xxx[.xxx]
 	newPathList := make([]string, 0, len(pathList)+2)
 	newPathList = append(newPathList, u.Host)
 	newPathList = append(newPathList, pathList...)
@@ -71,6 +78,7 @@ func ParseURL(s, host string) (*URL, error) {
 	return mu, nil
 }
 
+// Get 通过http的get请求url获取Response和是否文本数据（否则是二进制）
 func (this *URL) Get() (resp *http.Response, isText bool, err error) {
 	resp, err = http.Get(this.String())
 	if err != nil {
@@ -83,6 +91,7 @@ func (this *URL) Get() (resp *http.Response, isText bool, err error) {
 	return
 }
 
+// Equal 通过比较两个URL的Host和Filepath判断是否相等
 func (this *URL) Equal(other *URL) bool {
 
 	if this.Host != other.Host {

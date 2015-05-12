@@ -17,11 +17,13 @@ import (
 func init() {
 	// 输入参数
 	flag.StringVar(&BaseDir, "dir", "web", "存放网页文件的基本目录，默认为web")
-	flag.IntVar(&DirLimit, "count", 255, "限制每个文件夹的文件数，默认255个")
+	// TODO 未实现
+	// flag.IntVar(&DirLimit, "count", 1000, "限制每个文件夹的文件数，默认1000个")
 	flag.IntVar(&Deepth, "deepth", 16, "限制文件的深度，默认16层")
 	flag.BoolVar(&IsAll, "all", false, "是否要抓取整个网站，默认只抓取指定URL以下的网页")
 	flag.BoolVar(&IsHelp, "help", false, "获取帮助")
-	flag.BoolVar(&IsRaw, "raw", false, "是否原样抓取网页内容，不进行URL矫正")
+	// TODO 未实现URL矫正功能
+	// flag.BoolVar(&IsRaw, "raw", false, "是否原样抓取网页内容，不进行URL矫正")
 
 	flag.Parse()
 }
@@ -71,7 +73,7 @@ func fetch(u *URL) {
 	}
 	defer file.Close()
 
-	// 不同类型文件不同处理方式
+	// 对本域名下的文本数据执行crawl，二进制或其他域名的只下载
 	if isText && u.Host == BaseURL.Host {
 		fetchText(file, resp.Body, u)
 	} else {
@@ -81,6 +83,7 @@ func fetch(u *URL) {
 	log.Println(u.String())
 }
 
+// 获取二进制类型或其他域名的数据
 func fetchBlob(file io.Writer, reader io.Reader, u *URL) {
 	// 写入文件
 	_, err := io.Copy(file, reader)
@@ -92,6 +95,7 @@ func fetchBlob(file io.Writer, reader io.Reader, u *URL) {
 	BlobCount++
 }
 
+// 获取文本数据，并crawl子url
 func fetchText(file io.Writer, reader io.Reader, u *URL) {
 	// ReadLine 读取BODY
 	scanner := bufio.NewScanner(reader)
@@ -121,6 +125,7 @@ func fetchText(file io.Writer, reader io.Reader, u *URL) {
 				continue
 			}
 
+			// 看看子url符不符合抓取条件
 			handlePush(subU)
 
 			// 修改body中的路径
@@ -149,12 +154,19 @@ func fetchText(file io.Writer, reader io.Reader, u *URL) {
 }
 
 func handlePush(u *URL) {
+	// 判断深度，-1是减去Filepath最前面的域名
+	if len(strings.Split(u.FilePath, string(os.PathSeparator)))-1 > Deepth {
+		return
+	}
+
+	// 判断是不是基础URL底下的url
 	if BasePath != "" {
 		if u.Host == BaseURL.Host && !strings.HasPrefix(u.FilePath, BasePath) {
 			return
 		}
 	}
 
+	// 判断是不是已经抓取过了
 	for e := Visited.Front(); e != nil; e = e.Next() {
 		nu := e.Value.(URL)
 		if u.Equal(&nu) {
@@ -162,6 +174,7 @@ func handlePush(u *URL) {
 		}
 	}
 
+	// 判断是不是已经在待抓取列表里了
 	for e := ToVisit.Front(); e != nil; e = e.Next() {
 		nu := e.Value.(URL)
 		if u.Equal(&nu) {
@@ -173,6 +186,7 @@ func handlePush(u *URL) {
 }
 
 func createFile(filePath string) (*os.File, error) {
+	// 新建需要的文件夹
 	dir := path.Dir(filePath)
 	err := os.MkdirAll(dir, 0777)
 	if err != nil {
@@ -187,8 +201,8 @@ func createFile(filePath string) (*os.File, error) {
 	return file, nil
 }
 
+// 处理基础URL地址
 func handleBaseURL(s string) {
-	// 基础URL地址
 	u, err := url.Parse(s)
 
 	if err != nil || u.Host == "" || u.Scheme == "" {
@@ -200,22 +214,11 @@ func handleBaseURL(s string) {
 		log.Fatal(err)
 	}
 
+	// 用于判断是否子url
 	if !IsAll {
 		BasePath = path.Dir(BaseURL.FilePath)
 	}
 
-	//if BaseURL.IsBlob {
-	//    log.Fatal("URL地址获取的内容不是文本类型")
-	//}
-
-	//if IsAll {
-	//    newURL := new(URL)
-	//    newURL.Scheme = BaseURL.Scheme
-	//    newURL.Host = BaseURL.Host
-	//    newURL.IsBlob = false
-	//    newURL.Filepath = "__index__.html"
-	//    BaseURL = newURL
-	//}
 }
 
 func handleDir() {
@@ -240,21 +243,21 @@ func printHelp() {
 }
 
 var (
-	BaseDir  string
-	DirLimit int
-	Deepth   int
-	IsAll    bool
-	IsHelp   bool
-	IsRaw    bool
+	BaseDir  string // 工作目录
+	DirLimit int    // 限制一个文件夹下可以有多少文件
+	Deepth   int    // 限制文件相对工作目录的深度
+	IsAll    bool   // 是否抓取整个网站，不只抓取基础地址下的URL
+	IsHelp   bool   // 是否只打印帮助信息
+	IsRaw    bool   // 是否保留文件中原始url，不转成本地可用形式
 
-	BaseURL  *URL
-	BasePath string
+	BaseURL  *URL   // 基础地址URL
+	BasePath string // 用于判断基础地址下的URL
 
-	TextCount int
-	BlobCount int
+	TextCount int // 已下载文本数据统计数量
+	BlobCount int // 已下载二进制数据统计数量
 
-	ToVisit = list.New()
-	Visited = list.New()
+	ToVisit = list.New() // 待抓取URL列表
+	Visited = list.New() // 已抓取URL列表
 )
 
 var Regs = []*regexp.Regexp{
